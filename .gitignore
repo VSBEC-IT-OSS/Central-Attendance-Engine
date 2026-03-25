@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment — NEVER commit
+.env
+.env.local
+.env.*.local
+
+# Prisma generated client
+apps/api/node_modules/.prisma/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Test coverage
+coverage/
+
+# Docker
+nginx/certs/
+
+# Attendance file data (never commit real student data)
+/var/attendance/
+incoming/
+archive/

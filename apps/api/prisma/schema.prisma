@@ -1,0 +1,188 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Prisma Schema — AttendanceEngine
+// PostgreSQL backend with full audit trail
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Core attendance record ────────────────────────────────────────────────────
+
+model AttendanceRecord {
+  id           String           @id @default(uuid())
+  studentId    String
+  studentName  String
+  rollNumber   String
+  department   String
+  className    String   @map("class")
+  section      String
+  date         DateTime         @db.Date
+  firstPunchIn DateTime?
+  lastPunchOut DateTime?
+  status       AttendanceStatus
+  sourceFile   String
+  importLogId  String
+  importedAt   DateTime         @default(now())
+  rawHash      String           @unique // fingerprint for dedup
+
+  importLog ImportLog @relation(fields: [importLogId], references: [id])
+
+  @@index([date])
+  @@index([studentId])
+  @@index([department])
+  @@index([className])
+  @@index([department, className, section])
+  @@index([date, department])
+  @@index([date, status])
+  @@map("attendance_records")
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  HOLIDAY
+  EXCUSED
+}
+
+// ── Import lifecycle ──────────────────────────────────────────────────────────
+
+model ImportLog {
+  id          String       @id @default(uuid())
+  filename    String
+  fileHash    String       // SHA-256 of file — prevents re-importing same file
+  status      ImportStatus @default(PENDING)
+  totalRows   Int          @default(0)
+  parsedRows  Int          @default(0)
+  skippedRows Int          @default(0)  // dedup skips
+  errorRows   Int          @default(0)
+  startedAt   DateTime     @default(now())
+  completedAt DateTime?
+  triggeredBy String       @default("auto") // 'auto' | 'manual' | api-key-name
+  notes       String?
+
+  records    AttendanceRecord[]
+  parseErrors ParseError[]
+
+  @@index([status])
+  @@index([startedAt])
+  @@map("import_logs")
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  PARTIAL   // some rows failed, some succeeded
+  FAILED
+}
+
+// ── Row-level parse errors ────────────────────────────────────────────────────
+
+model ParseError {
+  id           String   @id @default(uuid())
+  importLogId  String
+  rowNumber    Int
+  rawData      String   // JSON of original xlsx row
+  errorCode    String
+  errorMessage String
+  createdAt    DateTime @default(now())
+
+  importLog ImportLog @relation(fields: [importLogId], references: [id])
+
+  @@index([importLogId])
+  @@map("parse_errors")
+}
+
+// ── API key management ────────────────────────────────────────────────────────
+
+model ApiKey {
+  id          String   @id @default(uuid())
+  name        String   @unique   // human label e.g. "whatsapp-bot"
+  keyHash     String   @unique   // bcrypt hash — never store plaintext
+  keyPrefix   String             // first 8 chars for display
+  permissions String[]           // e.g. ["attendance:read", "summary:read"]
+  isActive    Boolean  @default(true)
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  accessLogs ApiAccessLog[]
+
+  @@map("api_keys")
+}
+
+// ── API access log ────────────────────────────────────────────────────────────
+
+model ApiAccessLog {
+  id           String   @id @default(uuid())
+  apiKeyId     String?
+  endpoint     String
+  method       String
+  statusCode   Int
+  durationMs   Int
+  ipAddress    String?
+  requestedAt  DateTime @default(now())
+
+  apiKey ApiKey? @relation(fields: [apiKeyId], references: [id])
+
+  @@index([apiKeyId])
+  @@index([requestedAt])
+  @@map("api_access_logs")
+}
+
+// ── System events / alerts ────────────────────────────────────────────────────
+
+model SystemEvent {
+  id        String          @id @default(uuid())
+  type      SystemEventType
+  severity  EventSeverity   @default(INFO)
+  message   String
+  metadata  Json?
+  createdAt DateTime        @default(now())
+
+  @@index([type])
+  @@index([severity])
+  @@index([createdAt])
+  @@map("system_events")
+}
+
+enum SystemEventType {
+  IMPORT_RECEIVED
+  IMPORT_COMPLETED
+  IMPORT_FAILED
+  PARSE_ERROR
+  API_KEY_CREATED
+  API_KEY_REVOKED
+  SYSTEM_STARTUP
+  SYSTEM_SHUTDOWN
+  HEALTH_CHECK_FAILED
+}
+
+enum EventSeverity {
+  INFO
+  WARN
+  ERROR
+  CRITICAL
+}
+
+// ── Dashboard admin users ─────────────────────────────────────────────────────
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  lastLoginAt  DateTime?
+
+  @@map("admin_users")
+}
