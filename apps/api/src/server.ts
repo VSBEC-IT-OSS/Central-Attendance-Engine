@@ -80,9 +80,8 @@ async function start() {
   const app = await buildApp();
 
   // Connect infrastructure
-  await redis.connect();
-  await bullRedis.connect();
   await prisma.$connect();
+  // await bullRedis.connect();
 
   // Start background workers
   startImportWorker();

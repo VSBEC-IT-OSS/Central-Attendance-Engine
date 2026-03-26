@@ -1,5 +1,6 @@
 import type { IAttendanceAdapter } from './adapter.interface';
 import { DefaultBiometricAdapter } from './adapters/default-biometric.adapter';
+import { BioSyncAdapter } from './adapters/biosync.adapter';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AdapterRegistry
@@ -9,6 +10,7 @@ import { DefaultBiometricAdapter } from './adapters/default-biometric.adapter';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const adapters: IAttendanceAdapter[] = [
+  new BioSyncAdapter(),       // BioSync aggregator format (Emp Code + Punch Records)
   new DefaultBiometricAdapter(),
   // Add new adapters here:
   // new AnotherFormatAdapter(),
