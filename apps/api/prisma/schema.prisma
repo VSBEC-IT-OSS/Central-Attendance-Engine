@@ -10,6 +10,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ── Core attendance record ────────────────────────────────────────────────────
@@ -20,7 +21,7 @@ model AttendanceRecord {
   studentName  String
   rollNumber   String
   department   String
-  className    String   @map("class")
+  className    String           @map("class")
   section      String
   date         DateTime         @db.Date
   firstPunchIn DateTime?
@@ -31,7 +32,8 @@ model AttendanceRecord {
   importedAt   DateTime         @default(now())
   rawHash      String           @unique // fingerprint for dedup
 
-  importLog ImportLog @relation(fields: [importLogId], references: [id])
+  // Added onDelete: Cascade to clean up records when an import is deleted
+  importLog ImportLog @relation(fields: [importLogId], references: [id], onDelete: Cascade)
 
   @@index([date])
   @@index([studentId])
@@ -95,7 +97,8 @@ model ParseError {
   errorMessage String
   createdAt    DateTime @default(now())
 
-  importLog ImportLog @relation(fields: [importLogId], references: [id])
+  // Added onDelete: Cascade to clean up errors when an import is deleted
+  importLog ImportLog @relation(fields: [importLogId], references: [id], onDelete: Cascade)
 
   @@index([importLogId])
   @@map("parse_errors")

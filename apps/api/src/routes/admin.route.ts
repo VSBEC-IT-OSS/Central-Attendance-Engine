@@ -2,10 +2,11 @@ import { FastifyInstance } from 'fastify';
 import { createHash, randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../config/db';
-import { redis } from '../config/redis';
+import { redis, cache } from '../config/redis'; // Added cache for busting
 import { requireJwt } from '../middleware/auth';
 import { ok, created, fail, notFound, parsePagination, paginationMeta } from '../utils/response';
 import { importQueue } from '../jobs/importQueue';
+
 const APP_VERSION = '1.0.0';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,19 +78,47 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     return ok(reply, log);
   });
 
-  // Retry a failed import
+  /**
+   * DELETE /imports/:id
+   * Fully removes an import log and all associated attendance records/errors.
+   * Leverages Prisma's 'onDelete: Cascade' for a clean wipe.
+   */
+  app.delete('/imports/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const log = await prisma.importLog.findUnique({ where: { id } });
+    if (!log) return notFound(reply, `Import log ${id} not found`);
+
+    // Cascade delete handles AttendanceRecord and ParseError automatically
+    await prisma.importLog.delete({ where: { id } });
+
+    // Log the deletion event for the audit trail
+    await prisma.systemEvent.create({
+      data: {
+        type: 'IMPORT_FAILED', // Reusing type or you can add 'IMPORT_DELETED' to enum
+        severity: 'WARN',
+        message: `Admin deleted import: ${log.filename} (${id})`,
+        metadata: { filename: log.filename, deletedAt: new Date() },
+      },
+    }).catch(() => {});
+
+    // Crucial: Bust caches so the dashboard stats update immediately
+    await cache.delPattern('attendance:*');
+    await cache.delPattern('summary:*');
+
+    return ok(reply, { message: `Import ${id} and all related data purged successfully` });
+  });
+
+  // Retry a failed import (Legacy logic - now requires fresh upload)
   app.post('/imports/:id/retry', async (request, reply) => {
     const { id } = request.params as { id: string };
     const log = await prisma.importLog.findUnique({ where: { id } });
     if (!log) return notFound(reply, `Import log ${id} not found`);
-    if (log.status !== 'FAILED' && log.status !== 'PARTIAL') {
-      return fail(reply, 400, 'INVALID_STATUS', 'Only FAILED or PARTIAL imports can be retried');
-    }
-
-    // Reset the file hash so the dedup check passes
+    
+    // We update fileHash so a fresh upload of the same file isn't blocked as a duplicate
     await prisma.importLog.update({ where: { id }, data: { fileHash: 'retry-pending' } });
 
-    return ok(reply, { message: 'Manual retry must re-upload the file via /ingest/upload' });
+    return ok(reply, { message: 'Please re-upload the file via /ingest/upload to retry' });
   });
 
   // ── Parse errors ────────────────────────────────────────────────────────────
@@ -155,11 +184,10 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       data: { type: 'API_KEY_CREATED', severity: 'INFO', message: `API key created: ${body.name}`, metadata: { keyId: key.id } },
     });
 
-    // Return the raw key ONCE — never stored in plaintext
     return created(reply, {
       id: key.id,
       name: key.name,
-      key: rawKey, // shown only on creation
+      key: rawKey,
       keyPrefix,
       permissions,
       message: 'Store this key securely — it will not be shown again',
@@ -179,7 +207,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     return ok(reply, { message: `API key "${key.name}" revoked` });
   });
 
-  // ── Metadata: available departments, classes ────────────────────────────────
+  // ── Metadata ────────────────────────────────────────────────────────────────
   app.get('/meta/departments', async (_request, reply) => {
     const rows = await prisma.attendanceRecord.findMany({
       distinct: ['department'],

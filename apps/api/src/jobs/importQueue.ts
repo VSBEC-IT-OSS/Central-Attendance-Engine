@@ -2,7 +2,6 @@ import { Queue, Worker, Job } from 'bullmq';
 import { bullRedis } from '../config/redis';
 import { logger } from '../config/logger';
 import { runImport } from '../services/importService';
-import { moveToArchive } from '../ingest/fileWatcher';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Import Queue (BullMQ)
@@ -35,8 +34,10 @@ export function startImportWorker(): Worker<ImportJobData> {
     QUEUE_NAME,
     async (job: Job<ImportJobData>) => {
       logger.info({ jobId: job.id, filename: job.data.filename }, '[Queue] Processing import job');
+      
+      // runImport handles parsing, DB writing, and now AUTO-CLEANUP of the file
       const summary = await runImport(job.data);
-      await moveToArchive(job.data.filepath, job.data.filename);
+      
       return summary;
     },
     {

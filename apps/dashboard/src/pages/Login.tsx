@@ -42,6 +42,26 @@ export function LoginPage() {
           <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} disabled={isLoading}>
             {isLoading ? 'signing in...' : 'sign in →'}
           </button>
+          {/* Demo Credentials Box */}
+          <div style={{ 
+            marginTop: 24, 
+            textAlign: 'center', 
+            fontSize: 12, 
+            color: 'var(--text3)', 
+            fontFamily: 'var(--mono)' 
+          }}>
+            Demo: <span style={{ 
+              background: 'var(--bg3)', 
+              padding: '2px 6px', 
+              borderRadius: 4, 
+              color: 'var(--text2)' 
+            }}>hod@vsbec.edu.in</span> / <span style={{ 
+              background: 'var(--bg3)', 
+              padding: '2px 6px', 
+              borderRadius: 4, 
+              color: 'var(--text2)' 
+            }}>admin123</span>
+          </div>
         </form>
       </div>
     </div>

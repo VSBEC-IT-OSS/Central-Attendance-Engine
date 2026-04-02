@@ -5,13 +5,8 @@ import { parseXlsxFile, computeRowHash } from '../parser/xlsxParser';
 import { validateRows, flagFutureDates } from '../validation/rowValidator';
 import type { NormalisedRow, RowError } from '../parser/adapter.interface';
 import { emitImportEvent } from '../jobs/wsEmitter';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ImportService
-//
-// The single orchestration layer that takes a file path and drives the full
-// ingest pipeline: parse → validate → dedup → batch upsert → log.
-// ─────────────────────────────────────────────────────────────────────────────
+import { unlink } from 'fs/promises';
+import { existsSync } from 'fs';
 
 export interface ImportOptions {
   filepath: string;
@@ -48,6 +43,7 @@ export async function runImport(options: ImportOptions): Promise<ImportSummary> 
     const duplicate = await prisma.importLog.findFirst({
       where: { fileHash, status: { in: ['SUCCESS', 'PARTIAL'] } },
     });
+
     if (duplicate) {
       await prisma.importLog.update({
         where: { id: importLog.id },
@@ -55,7 +51,7 @@ export async function runImport(options: ImportOptions): Promise<ImportSummary> 
           status: 'FAILED',
           fileHash,
           completedAt: new Date(),
-          notes: `Duplicate file — already imported as ${duplicate.id} on ${duplicate.startedAt.toISOString()}`,
+          notes: `Duplicate file — already imported as ${duplicate.id}`,
         },
       });
       throw new Error(`File already imported: ${duplicate.id}`);
@@ -94,12 +90,11 @@ export async function runImport(options: ImportOptions): Promise<ImportSummary> 
     }
 
     // ── 5. Finalise import log ─────────────────────────────────────────────────
-    const status =
-      allErrors.length > 0 && written === 0
-        ? 'FAILED'
-        : allErrors.length > 0
-        ? 'PARTIAL'
-        : 'SUCCESS';
+    const status = allErrors.length > 0 && written === 0 
+      ? 'FAILED' 
+      : allErrors.length > 0 
+      ? 'PARTIAL' 
+      : 'SUCCESS';
 
     await prisma.importLog.update({
       where: { id: importLog.id },
@@ -125,11 +120,6 @@ export async function runImport(options: ImportOptions): Promise<ImportSummary> 
       percent: 100,
     });
 
-    logger.info(
-      { importLogId: importLog.id, status, written, skipped, errors: allErrors.length },
-      '[ImportService] Import complete',
-    );
-
     return {
       importLogId: importLog.id,
       status,
@@ -139,6 +129,7 @@ export async function runImport(options: ImportOptions): Promise<ImportSummary> 
       errorRows: allErrors.length,
       adapterUsed,
     };
+
   } catch (err) {
     const e = err as Error;
     logger.error({ err: e.message, importLogId: importLog.id }, '[ImportService] Import failed');
@@ -146,7 +137,7 @@ export async function runImport(options: ImportOptions): Promise<ImportSummary> 
     await prisma.importLog.update({
       where: { id: importLog.id },
       data: { status: 'FAILED', completedAt: new Date(), notes: e.message },
-    }).catch(() => {}); // don't throw again if update fails
+    }).catch(() => {});
 
     emitImportEvent('IMPORT_FAILED', {
       importLogId: importLog.id,
@@ -156,21 +147,21 @@ export async function runImport(options: ImportOptions): Promise<ImportSummary> 
       percent: 0,
     });
 
-    await prisma.systemEvent.create({
-      data: {
-        type: 'IMPORT_FAILED',
-        severity: 'ERROR',
-        message: `Import failed: ${filename}`,
-        metadata: { error: e.message, importLogId: importLog.id },
-      },
-    }).catch(() => {});
-
     throw err;
+  } finally {
+    // ── 7. THE CLEANUP (Zero-Footprint) ──────────────────────────────────────
+    if (filepath && existsSync(filepath)) {
+      try {
+        await unlink(filepath);
+        logger.info({ filepath }, '[ImportService] Temporary file deleted');
+      } catch (cleanupErr) {
+        logger.warn({ err: cleanupErr, filepath }, '[ImportService] Failed to delete temp file');
+      }
+    }
   }
 }
 
-// ── Batch upsert with dedup ───────────────────────────────────────────────────
-
+// ── Batch upsert logic (Deterministic Dedup) ─────────────────────────────────
 const BATCH_SIZE = 500;
 
 async function batchUpsert(
@@ -182,14 +173,11 @@ async function batchUpsert(
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE);
-
-    // Compute hashes for the batch
     const withHashes = batch.map((row) => ({
       row,
       hash: computeRowHash(row.studentId, row.date, row.firstPunchIn),
     }));
 
-    // Find which hashes already exist
     const existingHashes = await prisma.attendanceRecord
       .findMany({
         where: { rawHash: { in: withHashes.map((r) => r.hash) } },

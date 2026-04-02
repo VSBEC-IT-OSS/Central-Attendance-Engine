@@ -37,7 +37,7 @@ async function buildApp() {
     credentials: true,
   });
   await app.register(jwt, { secret: config.JWT_SECRET });
-  await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB
+  await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB
   await app.register(rateLimit, {
     max: config.RATE_LIMIT_MAX,
     timeWindow: config.RATE_LIMIT_WINDOW_MS,
@@ -78,14 +78,14 @@ async function buildApp() {
 
 async function start() {
   const app = await buildApp();
-
+  // console.log(process.env.DATABASE_URL)
   // Connect infrastructure
   await prisma.$connect();
   // await bullRedis.connect();
 
   // Start background workers
   startImportWorker();
-  startFileWatcher();
+  // startFileWatcher();
 
   // Log system startup
   await prisma.systemEvent.create({

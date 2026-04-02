@@ -9,6 +9,7 @@ export function ImportDetailPage() {
   const navigate = useNavigate();
   const [log, setLog] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -17,6 +18,27 @@ export function ImportDetailPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [id]);
+
+  const handleDelete = async () => {
+    if (!id) return;
+    const confirmed = window.confirm(
+      "Are you sure? This will permanently delete this import log and ALL associated attendance records from the database. This cannot be undone."
+    );
+
+    if (confirmed) {
+      setDeleting(true);
+      try {
+        // This calls the DELETE /api/v1/admin/imports/:id endpoint we just created
+        await api.admin.deleteImport(id); 
+        navigate('/imports'); // Send user back to the list after deletion
+      } catch (err) {
+        alert("Failed to delete import. Check console for details.");
+        console.error(err);
+      } finally {
+        setDeleting(false);
+      }
+    }
+  };
 
   if (loading) return <div style={{ padding: 40, display: 'flex', gap: 12, alignItems: 'center', color: 'var(--text3)' }}><Spinner /> loading...</div>;
   if (!log) return <div style={{ padding: 40, color: 'var(--red)' }}>Import not found</div>;
@@ -28,7 +50,7 @@ export function ImportDetailPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ cursor: 'pointer', color: 'var(--text3)', fontSize: 13 }} onClick={() => navigate('/imports')}>
           ← Import Logs
         </span>
@@ -64,22 +86,40 @@ export function ImportDetailPage() {
         </div>
       </div>
 
-      {/* Metadata */}
-      <div className="card" style={{ marginBottom: 24, fontSize: 13 }}>
-        <div className="card-title">Import Metadata</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {[
-            ['Started', fmtDate(log.startedAt)],
-            ['Completed', fmtDate(log.completedAt)],
-            ['Triggered By', log.triggeredBy],
-            ['Adapter Used', log.notes ?? '—'],
-            ['File Hash', log.fileHash],
-          ].map(([k, v]) => (
-            <div key={k} style={{ display: 'flex', gap: 12 }}>
-              <span style={{ color: 'var(--text3)', minWidth: 120 }}>{k}</span>
-              <code style={{ fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }}>{v}</code>
-            </div>
-          ))}
+      {/* Metadata & Actions */}
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24, marginBottom: 24 }}>
+        <div className="card" style={{ fontSize: 13 }}>
+          <div className="card-title">Import Metadata</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+            {[
+              ['Started', fmtDate(log.startedAt)],
+              ['Completed', fmtDate(log.completedAt)],
+              ['Triggered By', log.triggeredBy],
+              ['Adapter Used', log.notes ?? '—'],
+              ['File Hash', log.fileHash],
+            ].map(([k, v]) => (
+              <div key={k} style={{ display: 'flex', gap: 12 }}>
+                <span style={{ color: 'var(--text3)', minWidth: 120 }}>{k}</span>
+                <code style={{ fontSize: 12, color: 'var(--text)', wordBreak: 'break-all' }}>{v}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Danger Zone / Delete Action */}
+        <div className="card" style={{ border: '1px solid var(--red-muted)', background: 'var(--bg2)' }}>
+          <div className="card-title" style={{ color: 'var(--red)' }}>Danger Zone</div>
+          <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>
+            Use this to undo a problematic upload. This will wipe all attendance data linked to this file.
+          </p>
+          <button 
+            className="btn btn-error" 
+            onClick={handleDelete}
+            disabled={deleting}
+            style={{ width: '100%', padding: '10px', background: 'var(--red)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+          >
+            {deleting ? 'Purging Data...' : 'Delete This Import'}
+          </button>
         </div>
       </div>
 

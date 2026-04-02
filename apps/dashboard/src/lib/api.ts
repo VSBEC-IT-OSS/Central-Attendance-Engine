@@ -1,6 +1,6 @@
 import type { ApiResponse } from '@attendance-engine/schema';
 
-const BASE = '/api/v1';
+const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1';
 
 function getToken(): string | null {
   return localStorage.getItem('ae_token');
@@ -37,6 +37,7 @@ export const api = {
     imports: (params?: Record<string, string>) =>
       request<any>(`/admin/imports?${new URLSearchParams(params ?? {})}`),
     importById: (id: string) => request<any>(`/admin/imports/${id}`),
+    deleteImport: (id: string) => request<any>(`/admin/imports/${id}`, { method: 'DELETE' }),
     parseErrors: (params?: Record<string, string>) =>
       request<any>(`/admin/parse-errors?${new URLSearchParams(params ?? {})}`),
     events: (params?: Record<string, string>) =>
