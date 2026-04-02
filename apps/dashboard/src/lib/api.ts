@@ -1,6 +1,7 @@
 import type { ApiResponse } from '@attendance-engine/schema';
 
-const BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1';
+// THE FIX: Cast import.meta to 'any' so TypeScript doesn't complain about missing '.env'
+const BASE = ((import.meta as any).env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1';
 
 function getToken(): string | null {
   return localStorage.getItem('ae_token');
