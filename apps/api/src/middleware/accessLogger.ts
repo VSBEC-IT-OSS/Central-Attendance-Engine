@@ -1,17 +1,15 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../config/db';
 
-// Logs API calls to api_access_logs table for audit trail
-export async function accessLogger(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  reply.addHook?.('onSend', async (_req, _rep) => {});
+export const accessLogger = async (fastify: FastifyInstance) => {
+  // FIXED: Hooks must be added to the FastifyInstance, not FastifyReply
+  fastify.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
+    const durationMs = Math.round(reply.elapsedTime);
+    
+    // Using type casting safely for custom decorators
+    const apiKeyId = (request as any).apiKeyRecord?.id ?? null;
 
-  const start = Date.now();
-
-  reply.raw.on('finish', () => {
-    const durationMs = Date.now() - start;
-    const apiKeyId = request.apiKeyRecord?.id ?? null;
-
-    // Fire-and-forget — never block the response
+    // Fire-and-forget logging
     prisma.apiAccessLog
       .create({
         data: {
@@ -23,6 +21,8 @@ export async function accessLogger(request: FastifyRequest, reply: FastifyReply)
           ipAddress: request.ip,
         },
       })
-      .catch(() => {});
+      .catch((err) => {
+        fastify.log.error({ err }, 'Failed to save access log to database');
+      });
   });
-}
+};

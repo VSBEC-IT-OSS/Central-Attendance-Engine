@@ -1,24 +1,13 @@
 import { AttendanceStatus } from '@attendance-engine/schema';
 import { parseISO, isValid, parse as parseFns, format } from 'date-fns';
+// FIXED: Ensure the import case matches your filename (usually adapter.interface.ts)
 import type {
   IAttendanceAdapter,
   NormalisedRow,
   ParseResult,
   RawRow,
   RowError,
-} from './adapter.interface';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DefaultBiometricAdapter
-//
-// Handles the standard xlsx format produced by the aggregator server.
-// Expected columns (case-insensitive, trimmed):
-//
-//   student_id | student_name | roll_no | department | class | section |
-//   date | punch_in | punch_out | status
-//
-// Column names are flexible — see COLUMN_MAP below. Add aliases as needed.
-// ─────────────────────────────────────────────────────────────────────────────
+} from '../adapter.interface';
 
 const COLUMN_MAP: Record<string, string[]> = {
   studentId:    ['student_id', 'studentid', 'id', 'emp_id', 'empid'],
@@ -47,18 +36,14 @@ export class DefaultBiometricAdapter implements IAttendanceAdapter {
 
   canHandle(headers: string[]): boolean {
     const normalised = headers.map((h) => h.toLowerCase().trim().replace(/\s+/g, '_'));
-    // Must have at least: some id field, name, date
     const hasId = COLUMN_MAP.studentId.some((k) => normalised.includes(k));
     const hasDate = COLUMN_MAP.date.some((k) => normalised.includes(k));
     return hasId && hasDate;
   }
 
   async parse(rows: RawRow[], _filename: string): Promise<ParseResult> {
-    if (rows.length === 0) {
-      return { rows: [], errors: [], totalRawRows: 0 };
-    }
+    if (rows.length === 0) return { rows: [], errors: [], totalRawRows: 0 };
 
-    // Build header → canonical field mapping from first row keys
     const headers = Object.keys(rows[0]).map((h) => h.toLowerCase().trim().replace(/\s+/g, '_'));
     const fieldMap = this.buildFieldMap(headers, Object.keys(rows[0]));
 
@@ -66,7 +51,7 @@ export class DefaultBiometricAdapter implements IAttendanceAdapter {
     const errors: RowError[] = [];
 
     rows.forEach((rawRow, idx) => {
-      const rowNumber = idx + 2; // +2 because row 1 is headers in xlsx
+      const rowNumber = idx + 2; 
       try {
         const row = this.normaliseRow(rawRow, fieldMap, rowNumber);
         if (row) normalised.push(row);
@@ -84,53 +69,32 @@ export class DefaultBiometricAdapter implements IAttendanceAdapter {
     return { rows: normalised, errors, totalRawRows: rows.length };
   }
 
-  private buildFieldMap(
-    normalisedHeaders: string[],
-    originalHeaders: string[],
-  ): Record<string, string> {
+  private buildFieldMap(normalisedHeaders: string[], originalHeaders: string[]): Record<string, string> {
     const map: Record<string, string> = {};
     for (const [canonical, aliases] of Object.entries(COLUMN_MAP)) {
       const idx = normalisedHeaders.findIndex((h) => aliases.includes(h));
-      if (idx !== -1) {
-        map[canonical] = originalHeaders[idx];
-      }
+      if (idx !== -1) map[canonical] = originalHeaders[idx];
     }
     return map;
   }
 
-  private normaliseRow(
-    raw: RawRow,
-    fieldMap: Record<string, string>,
-    rowNumber: number,
-  ): NormalisedRow | null {
+  private normaliseRow(raw: RawRow, fieldMap: Record<string, string>, rowNumber: number): NormalisedRow | null {
     const get = (field: string): string => {
       const key = fieldMap[field];
       if (!key) return '';
       const val = raw[key];
-      if (val == null) return '';
-      return String(val).trim();
+      return val == null ? '' : String(val).trim();
     };
 
     const studentId = get('studentId');
-    const studentName = get('studentName');
     const date = this.parseDate(get('date'));
 
-    if (!studentId) {
-      throw Object.assign(new Error(`Row ${rowNumber}: missing student_id`), {
-        code: 'MISSING_STUDENT_ID',
-      });
-    }
-    if (!date) {
-      throw Object.assign(new Error(`Row ${rowNumber}: invalid or missing date "${get('date')}"`), {
-        code: 'INVALID_DATE',
-      });
-    }
-
-    const status = this.parseStatus(get('status'), get('firstPunchIn'));
+    if (!studentId) throw new Error(`Row ${rowNumber}: missing student_id`);
+    if (!date) throw new Error(`Row ${rowNumber}: invalid date "${get('date')}"`);
 
     return {
       studentId,
-      studentName: studentName || 'Unknown',
+      studentName: get('studentName') || 'Unknown',
       rollNumber: get('rollNumber') || studentId,
       department: get('department') || 'Unknown',
       className: get('className') || 'Unknown',
@@ -138,44 +102,29 @@ export class DefaultBiometricAdapter implements IAttendanceAdapter {
       date,
       firstPunchIn: this.parseTime(get('firstPunchIn'), date),
       lastPunchOut: this.parseTime(get('lastPunchOut'), date),
-      status,
+      status: this.parseStatus(get('status'), get('firstPunchIn')),
     };
   }
 
   private parseDate(raw: string): Date | null {
     if (!raw) return null;
-
-    // Already a JS Date from exceljs
     const asDate = new Date(raw);
     if (isValid(asDate) && !isNaN(asDate.getTime())) {
-      // Strip time component — we only want the date
       return new Date(format(asDate, 'yyyy-MM-dd') + 'T00:00:00.000Z');
     }
-
-    // Try common formats
     const formats = ['dd/MM/yyyy', 'MM/dd/yyyy', 'yyyy-MM-dd', 'dd-MM-yyyy', 'dd.MM.yyyy'];
     for (const fmt of formats) {
       const parsed = parseFns(raw, fmt, new Date());
-      if (isValid(parsed)) {
-        return new Date(format(parsed, 'yyyy-MM-dd') + 'T00:00:00.000Z');
-      }
+      if (isValid(parsed)) return new Date(format(parsed, 'yyyy-MM-dd') + 'T00:00:00.000Z');
     }
-
-    // ISO fallback
     const iso = parseISO(raw);
-    if (isValid(iso)) return iso;
-
-    return null;
+    return isValid(iso) ? iso : null;
   }
 
   private parseTime(raw: string, baseDate: Date): Date | null {
     if (!raw) return null;
-
-    // If it's already a full datetime
     const full = new Date(raw);
     if (isValid(full) && !isNaN(full.getTime())) return full;
-
-    // Time-only: HH:mm or HH:mm:ss
     const timeMatch = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
     if (timeMatch) {
       const [, h, m, s = '0'] = timeMatch;
@@ -183,7 +132,6 @@ export class DefaultBiometricAdapter implements IAttendanceAdapter {
       dt.setUTCHours(parseInt(h), parseInt(m), parseInt(s), 0);
       return dt;
     }
-
     return null;
   }
 
@@ -192,8 +140,6 @@ export class DefaultBiometricAdapter implements IAttendanceAdapter {
       const key = raw.toLowerCase().trim().replace(/[^a-z0-9_]/g, '');
       if (STATUS_MAP[key]) return STATUS_MAP[key];
     }
-    // Infer from punch data if status column missing
-    if (punchIn) return 'PRESENT';
-    return 'ABSENT';
+    return punchIn ? 'PRESENT' : 'ABSENT';
   }
 }
