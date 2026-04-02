@@ -13,11 +13,6 @@ export interface XlsxParseOutput {
   filename: string;
 }
 
-/**
- * BioSync (and some other xlsx generators) embed drawings/images in every
- * sheet using the default XML namespace instead of the 'xdr:' prefix that
- * ExcelJS expects. This strips those artefacts to prevent ExcelJS from crashing.
- */
 async function stripDrawings(fileBytes: Buffer): Promise<Buffer> {
   const zip = await JSZip.loadAsync(fileBytes);
   const names: string[] = Object.keys(zip.files);
@@ -44,15 +39,11 @@ async function stripDrawings(fileBytes: Buffer): Promise<Buffer> {
     }),
   );
 
-  // FIXED: Double casting to satisfy Node.js Buffer vs Uint8Array strict typing
   const output = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-  return output as unknown as Buffer;
+  // THE FIX: Create a fresh Buffer from a new Uint8Array to reset the internal prototype
+  return Buffer.from(new Uint8Array(output));
 }
 
-/**
- * Entry point for all xlsx parsing. 
- * Reads the file, auto-detects the adapter, and returns normalised results.
- */
 export async function parseXlsxFile(filepath: string, filename: string): Promise<XlsxParseOutput> {
   logger.info({ filepath, filename }, '[Parser] Starting xlsx parse');
 
@@ -61,8 +52,8 @@ export async function parseXlsxFile(filepath: string, filename: string): Promise
   const cleanBytes = await stripDrawings(fileBytes);
 
   const workbook = new ExcelJS.Workbook();
-  // FIXED: Cast to unknown then Buffer to resolve TS2345 in Node 20+ environments
-  await workbook.xlsx.load(cleanBytes as unknown as Buffer);
+  // THE FIX: Explicit cast to 'any' before 'Buffer' to break the type-check loop
+  await workbook.xlsx.load(Buffer.from(new Uint8Array(cleanBytes)) as any);
 
   const worksheets: ExcelJS.Worksheet[] = [];
   workbook.eachSheet((sheet) => { if (sheet.rowCount > 1) worksheets.push(sheet); });
@@ -117,10 +108,6 @@ export async function parseXlsxFile(filepath: string, filename: string): Promise
   return { result: mergedResult, fileHash, adapterUsed: adapter.name, filename };
 }
 
-/**
- * FIXED: Added computeRowHash export required by importService.ts
- * Computes a deterministic hash for a single attendance row (for dedup)
- */
 export function computeRowHash(
   studentId: string,
   date: Date,
