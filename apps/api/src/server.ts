@@ -34,10 +34,19 @@ async function buildApp() {
 
   // ── Plugins ─────────────────────────────────────────────────────────────────
   await app.register(helmet, { contentSecurityPolicy: false });
+  
+  // UPDATED CORS CONFIGURATION
   await app.register(cors, {
-    origin: [config.DASHBOARD_ORIGIN, 'http://localhost:5173'],
+    origin: [
+      config.DASHBOARD_ORIGIN, 
+      'https://central-attendance-engine-dz5t.onrender.com', // Your specific Render Frontend
+      'http://localhost:5173'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   });
+
   await app.register(jwt, { secret: config.JWT_SECRET });
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB
   await app.register(rateLimit, {
@@ -80,18 +89,18 @@ async function buildApp() {
 
 async function start() {
   const app = await buildApp();
-  // console.log(process.env.DATABASE_URL)
-  // Connect infrastructure
+  
   await prisma.$connect();
-  // await bullRedis.connect();
 
-  // Start background workers
   startImportWorker();
-  // startFileWatcher();
 
-  // Log system startup
   await prisma.systemEvent.create({
-    data: { type: 'SYSTEM_STARTUP', severity: 'INFO', message: 'AttendanceEngine started', metadata: { port: config.PORT, env: config.NODE_ENV } },
+    data: { 
+        type: 'SYSTEM_STARTUP', 
+        severity: 'INFO', 
+        message: 'AttendanceEngine started', 
+        metadata: { port: config.PORT, env: config.NODE_ENV } 
+    },
   }).catch(() => {});
 
   await app.listen({ port: config.PORT, host: config.HOST });
@@ -100,7 +109,6 @@ async function start() {
   logger.info(`🔌 WebSocket: ws://localhost:${config.PORT}/ws`);
 }
 
-// Graceful shutdown
 process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully...');
   await prisma.systemEvent.create({
