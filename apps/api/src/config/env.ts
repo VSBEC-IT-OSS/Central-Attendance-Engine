@@ -10,11 +10,12 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   JWT_EXPIRES_IN: z.string().default('8h'),
   INGEST_SECRET: z.string().min(8),
-  WATCH_DIR: z.string().default('/var/attendance/incoming'),
-  ARCHIVE_DIR: z.string().default('/var/attendance/archive'),
+  // FIX: Changed from /var/attendance to relative ./storage paths for Render compatibility
+  WATCH_DIR: z.string().default('./storage/incoming'),
+  ARCHIVE_DIR: z.string().default('./storage/archive'),
   ADMIN_EMAIL: z.string().email().optional(),
   ADMIN_PASSWORD: z.string().optional(),
-  DASHBOARD_ORIGIN: z.string().default('http://localhost:5173'),
+  DASHBOARD_ORIGIN: z.string().default('https://central-attendance-engine-frontend.onrender.com'),
   RATE_LIMIT_MAX: z.coerce.number().default(100),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
 });
