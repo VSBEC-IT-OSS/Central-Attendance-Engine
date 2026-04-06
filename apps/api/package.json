@@ -1,50 +1,123 @@
-{
-  "name": "@attendance-engine/api",
-  "version": "1.0.0",
-  "main": "dist/server.js",
-  "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc && tsc-alias",
-    "start": "node dist/server.js",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "db:migrate": "prisma migrate dev",
-    "db:migrate:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio",
-    "db:seed": "tsx src/config/seed.ts",
-    "db:generate": "prisma generate"
-  },
-  "dependencies": {
-    "@attendance-engine/schema": "*",
-    "@fastify/cors": "^9.0.1",
-    "@fastify/helmet": "^11.1.1",
-    "@fastify/jwt": "^8.0.1",
-    "@fastify/multipart": "^8.3.0",
-    "@fastify/rate-limit": "^9.1.0",
-    "@fastify/static": "^7.0.4",
-    "@fastify/websocket": "^10.0.1",
-    "@prisma/client": "^5.11.0",
-    "bcryptjs": "^2.4.3",
-    "bullmq": "^5.4.2",
-    "chokidar": "^3.6.0",
-    "date-fns": "^3.6.0",
-    "dotenv": "^16.4.5",
-    "exceljs": "^4.4.0",
-    "fastify": "^4.26.2",
-    "ioredis": "^5.3.2",
-    "pino": "^8.19.0",
-    "pino-pretty": "^11.0.0",
-    "uuid": "^9.0.1",
-    "zod": "^3.22.4"
-  },
-  "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^20.11.0",
-    "@types/uuid": "^9.0.8",
-    "prisma": "^5.11.0",
-    "tsc-alias": "^1.8.10",
-    "tsx": "^4.7.1",
-    "typescript": "^5.4.0",
-    "vitest": "^1.4.0"
-  }
+import 'dotenv/config';
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import jwt from '@fastify/jwt';
+import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
+import websocket from '@fastify/websocket';
+
+import { config } from './config/env';
+import { logger } from './config/logger';
+import { prisma } from './config/db';
+import { redis, bullRedis } from './config/redis';
+
+import { ingestRoutes } from './routes/ingest.route';
+import { attendanceRoutes } from './routes/attendance.route';
+import { summaryRoutes } from './routes/summary.route';
+import { adminRoutes, authRoutes } from './routes/admin.route';
+import { wsRoutes } from './routes/ws.route';
+import { startImportWorker } from './jobs/importQueue';
+import { startFileWatcher } from './ingest/fileWatcher';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bootstrap
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function buildApp() {
+  const app = Fastify({
+    logger: false, // we use our own Pino instance
+    trustProxy: true,
+  });
+
+  // ── Plugins ─────────────────────────────────────────────────────────────────
+  await app.register(helmet, { contentSecurityPolicy: false });
+  
+  // UPDATED CORS CONFIGURATION
+  await app.register(cors, {
+    origin: [
+      config.DASHBOARD_ORIGIN, 
+      'https://central-attendance-engine-dz5t.onrender.com', // Your specific Render Frontend
+      'http://localhost:5173'
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  });
+
+  await app.register(jwt, { secret: config.JWT_SECRET });
+  await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB
+  await app.register(rateLimit, {
+    max: config.RATE_LIMIT_MAX,
+    timeWindow: config.RATE_LIMIT_WINDOW_MS,
+    redis,
+  });
+  await app.register(websocket);
+
+  // ── Global error handler ───────────────────────────────────────────────────
+  app.setErrorHandler((error, request, reply) => {
+    logger.error({ err: error, url: request.url, method: request.method }, 'Unhandled error');
+    const statusCode = error.statusCode ?? 500;
+    reply.status(statusCode).send({
+      success: false,
+      error: {
+        code: error.code ?? 'INTERNAL_ERROR',
+        message: config.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+      },
+    });
+  });
+
+  app.setNotFoundHandler((_request, reply) => {
+    reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Route not found' } });
+  });
+
+  // ── Routes ───────────────────────────────────────────────────────────────────
+  await app.register(wsRoutes);
+  await app.register(authRoutes, { prefix: '/api/v1/auth' });
+  await app.register(ingestRoutes, { prefix: '/api/v1/ingest' });
+  await app.register(attendanceRoutes, { prefix: '/api/v1/attendance' });
+  await app.register(summaryRoutes, { prefix: '/api/v1/summary' });
+  await app.register(adminRoutes, { prefix: '/api/v1/admin' });
+
+  // ── Health check (public) ────────────────────────────────────────────────────
+  app.get('/health', async () => ({ status: 'ok', version: '1.0.0', ts: new Date().toISOString() }));
+
+  return app;
 }
+
+async function start() {
+  const app = await buildApp();
+  
+  await prisma.$connect();
+
+  startImportWorker();
+
+  await prisma.systemEvent.create({
+    data: { 
+        type: 'SYSTEM_STARTUP', 
+        severity: 'INFO', 
+        message: 'AttendanceEngine started', 
+        metadata: { port: config.PORT, env: config.NODE_ENV } 
+    },
+  }).catch(() => {});
+
+  await app.listen({ port: config.PORT, host: config.HOST });
+  logger.info(`🚀 AttendanceEngine running on http://${config.HOST}:${config.PORT}`);
+  logger.info(`📊 Dashboard: ${config.DASHBOARD_ORIGIN}`);
+  logger.info(`🔌 WebSocket: ws://localhost:${config.PORT}/ws`);
+}
+
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down gracefully...');
+  await prisma.systemEvent.create({
+    data: { type: 'SYSTEM_SHUTDOWN', severity: 'INFO', message: 'Graceful shutdown initiated' },
+  }).catch(() => {});
+  await prisma.$disconnect();
+  await redis.quit();
+  process.exit(0);
+});
+
+start().catch((err) => {
+  logger.error({ err }, 'Failed to start server');
+  process.exit(1);
+});
