@@ -21,7 +21,7 @@ export const accessLogger = async (fastify: FastifyInstance) => {
           ipAddress: request.ip,
         },
       })
-      .catch((err) => {
+      .catch((err: Error) => {
         fastify.log.error({ err }, 'Failed to save access log to database');
       });
   });
