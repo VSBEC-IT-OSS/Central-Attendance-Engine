@@ -39,7 +39,7 @@ async function buildApp() {
   await app.register(cors, {
     origin: [
       config.DASHBOARD_ORIGIN, 
-      'https://central-attendance-engine-dz5t.onrender.com', // Your specific Render Frontend
+      'https://central-attendance-engine-frontend.onrender.com', // Your specific Render Frontend
       'http://localhost:5173'
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
